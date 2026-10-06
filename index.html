@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ku" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#05070b" />
+  <title>JARVIS AI</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#05070b;color:#eef5fb;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .app{max-width:760px;margin:auto;min-height:100dvh;display:flex;flex-direction:column;padding:18px;background:radial-gradient(circle at top,#102333 0,#080b10 35%,#05070b 72%)}
+    header{display:flex;justify-content:space-between;align-items:center;padding:10px 0 18px;border-bottom:1px solid #18212b}
+    h1{margin:0;font-size:20px;letter-spacing:4px}.online{font-size:12px;color:#36e6a1}
+    #chat{flex:1;overflow:auto;padding:22px 0;display:flex;flex-direction:column;gap:12px}
+    .msg{max-width:88%;padding:12px 14px;border-radius:18px;line-height:1.6;white-space:pre-wrap}
+    .user{align-self:flex-start;background:#123047}.ai{align-self:flex-end;background:#111820;border:1px solid #1d2a35}
+    form{display:flex;gap:8px;padding:10px 0}
+    input{flex:1;min-width:0;border-radius:24px;border:1px solid #1d2a35;background:#0d141b;color:white;padding:14px 16px;font-size:16px}
+    button{border:0;border-radius:50%;width:48px;height:48px;background:#14384d;color:white;font-size:18px}
+    .hint{font-size:12px;color:#6e8190;text-align:center;padding-bottom:6px}
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div><h1>JARVIS</h1><div class="online">● Online</div></div>
+      <div>AI</div>
+    </header>
+
+    <section id="chat">
+      <div class="msg ai">سڵاو، من JARVIS ـم. چی دەتەوێت بۆت بکەم؟</div>
+    </section>
+
+    <form id="form">
+      <input id="input" autocomplete="off" placeholder="فەرمانەکەت بنووسە..." />
+      <button type="submit">➤</button>
+    </form>
+    <div class="hint" id="status">Workers AI</div>
+  </main>
+
+<script>
+const chat = document.getElementById("chat");
+const form = document.getElementById("form");
+const input = document.getElementById("input");
+const status = document.getElementById("status");
+const messages = [];
+
+function add(text, cls){
+  const el = document.createElement("div");
+  el.className = "msg " + cls;
+  el.textContent = text;
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if(!text) return;
+
+  add(text, "user");
+  messages.push({role:"user", content:text});
+  input.value = "";
+  status.textContent = "JARVIS بیر دەکاتەوە...";
+
+  try{
+    const r = await fetch("/api/chat", {
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({messages})
+    });
+    const data = await r.json();
+    const answer = data.response || data.error || "وەڵامێک نەگەیشت.";
+    add(answer, "ai");
+    messages.push({role:"assistant", content:answer});
+  }catch(err){
+    add("کێشەی پەیوەندی هەیە. دووبارە هەوڵ بدە.", "ai");
+  }finally{
+    status.textContent = "Workers AI";
+  }
+});
+</script>
+</body>
+</html>
