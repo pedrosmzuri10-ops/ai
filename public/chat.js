@@ -2,9 +2,9 @@ const chat=document.getElementById("chat"),form=document.getElementById("compose
 const liveOpen=document.getElementById("liveOpen"),livePanel=document.getElementById("livePanel"),liveClose=document.getElementById("liveClose"),liveMain=document.getElementById("liveMain"),liveState=document.getElementById("liveState"),liveLast=document.getElementById("liveLast"),liveOrb=document.getElementById("liveOrb");
 
 let messages=[],busy=false,voiceOn=true;
-let liveActive=false,liveStream=null,liveRecorder=null,liveChunks=[];
-let audioCtx=null,analyser=null,rafId=null,currentSource=null;
-let speakingNow=false,bargeRaf=null,bargeSince=0,bargeLocked=false;
+let liveActive=false,liveStream=null,audioCtx=null,micSource=null,analyser=null,rafId=null;
+let processor=null,silentGain=null,pcmChunks=[],captureRate=48000;
+let currentSource=null,speakingNow=false,bargeRaf=null,bargeSince=0,bargeLocked=false;
 
 function add(text,role){
   const w=document.getElementById("welcome");
@@ -25,6 +25,16 @@ function pickVoice(){
       || voices.find(v=>/^ar-IQ/i.test(v.lang))
       || voices.find(v=>/^ar(-|_)?/i.test(v.lang))
       || voices[0] || null;
+}
+
+function unlockSpeech(){
+  if(!("speechSynthesis" in window))return;
+  try{
+    const u=new SpeechSynthesisUtterance(".");
+    u.volume=0;
+    u.rate=10;
+    speechSynthesis.speak(u);
+  }catch(e){}
 }
 
 async function ensureAudio(){
@@ -50,12 +60,10 @@ function stopBargeWatcher(){
 function stopSpeaking(){
   speakingNow=false;
   stopBargeWatcher();
-
   if(currentSource){
     try{currentSource.onended=null;currentSource.stop(0)}catch(e){}
     currentSource=null;
   }
-
   if("speechSynthesis" in window){
     try{speechSynthesis.cancel()}catch(e){}
   }
@@ -79,38 +87,34 @@ function startBargeWatcher(){
 
   const watch=()=>{
     if(!liveActive||!speakingNow||bargeLocked)return;
-
     const rms=rmsNow();
     const now=performance.now();
 
-    if(rms>.06){
+    if(rms>.065){
       if(!bargeSince)bargeSince=now;
-
-      if(now-bargeSince>140){
+      if(now-bargeSince>150){
         bargeLocked=true;
         liveLast.textContent="باشە، گوێم لێتە...";
         setLiveState("listening","قسەت پێبڕی — گوێم لێتە...");
         stopSpeaking();
-
         setTimeout(()=>{
           bargeLocked=false;
           if(liveActive)startListeningTurn(true);
-        },60);
+        },70);
         return;
       }
     }else{
       bargeSince=0;
     }
-
     bargeRaf=requestAnimationFrame(watch);
   };
 
   bargeRaf=requestAnimationFrame(watch);
 }
 
-function browserSpeak(text,onDone){
+function browserSpeak(text,onDone,onFail){
   if(!voiceOn||!("speechSynthesis" in window)||!text){
-    onDone?.();
+    onFail?.();
     return;
   }
 
@@ -124,49 +128,57 @@ function browserSpeak(text,onDone){
       u.voice=v;
       u.lang=v.lang;
     }else{
-      u.lang="ku";
+      u.lang="ar-IQ";
     }
 
-    u.rate=1.0;
-    u.pitch=.96;
+    u.rate=.98;
+    u.pitch=.95;
     u.volume=1;
 
-    let finished=false;
+    let started=false,finished=false;
+
+    const startup=setTimeout(()=>{
+      if(!started&&!finished){
+        finished=true;
+        try{speechSynthesis.cancel()}catch(e){}
+        onFail?.();
+      }
+    },850);
+
     const done=()=>{
       if(finished)return;
       finished=true;
+      clearTimeout(startup);
       speakingNow=false;
       stopBargeWatcher();
       onDone?.();
     };
 
-    const watchdog=setTimeout(done,Math.min(14000,2500+text.length*85));
-
     u.onstart=()=>{
+      started=true;
       speakingNow=true;
       startBargeWatcher();
     };
 
-    u.onend=()=>{
-      clearTimeout(watchdog);
-      done();
-    };
+    u.onend=done;
 
     u.onerror=()=>{
-      clearTimeout(watchdog);
-      done();
+      if(finished)return;
+      finished=true;
+      clearTimeout(startup);
+      speakingNow=false;
+      stopBargeWatcher();
+      onFail?.();
     };
 
-    speakingNow=true;
     speechSynthesis.speak(u);
 
   }catch(e){
-    speakingNow=false;
-    onDone?.();
+    onFail?.();
   }
 }
 
-async function playServerTTS(text,onDone){
+async function serverSpeak(text,onDone){
   if(!voiceOn||!text){
     onDone?.();
     return;
@@ -175,7 +187,7 @@ async function playServerTTS(text,onDone){
   await ensureAudio();
 
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),4500);
+  const timeout=setTimeout(()=>controller.abort(),5000);
 
   try{
     const r=await fetch("/api/tts",{
@@ -185,19 +197,15 @@ async function playServerTTS(text,onDone){
       signal:controller.signal
     });
 
-    clearTimeout(timer);
+    clearTimeout(timeout);
 
-    if(!r.ok)throw new Error("tts "+r.status);
+    if(!r.ok)throw new Error("TTS "+r.status);
 
     const ab=await r.arrayBuffer();
-    if(!ab.byteLength)throw new Error("empty tts");
+    if(!ab.byteLength)throw new Error("Empty TTS");
 
     const decoded=await audioCtx.decodeAudioData(ab.slice(0));
-
-    if(!liveActive){
-      onDone?.();
-      return;
-    }
+    if(!liveActive){onDone?.();return}
 
     stopSpeaking();
 
@@ -207,33 +215,29 @@ async function playServerTTS(text,onDone){
     currentSource=source;
     speakingNow=true;
 
-    let ended=false;
-    const done=()=>{
-      if(ended)return;
-      ended=true;
-      speakingNow=false;
+    source.onended=()=>{
       currentSource=null;
+      speakingNow=false;
       stopBargeWatcher();
       onDone?.();
-    };
-
-    const watchdog=setTimeout(()=>{
-      try{source.stop(0)}catch(e){}
-      done();
-    },Math.min(16000,3000+text.length*90));
-
-    source.onended=()=>{
-      clearTimeout(watchdog);
-      done();
     };
 
     source.start(0);
     startBargeWatcher();
 
   }catch(e){
-    clearTimeout(timer);
-    browserSpeak(text,onDone);
+    clearTimeout(timeout);
+    speakingNow=false;
+    onDone?.();
   }
+}
+
+function speakLive(text,onDone){
+  browserSpeak(
+    text,
+    onDone,
+    ()=>serverSpeak(text,onDone)
+  );
 }
 
 if("speechSynthesis" in window){
@@ -278,7 +282,9 @@ async function send(text){
     messages.push({role:"assistant",content:answer});
     statusEl.textContent="JARVIS ئامادەیە";
 
-    if(data.response)browserSpeak(answer);
+    if(data.response){
+      browserSpeak(answer,()=>{},()=>{});
+    }
 
   }catch(e){
     bubble.textContent="کێشەی پەیوەندی بە AI هەیە.";
@@ -304,10 +310,8 @@ clearBtn.onclick=()=>{
 
 function setLiveState(state,text){
   liveOrb.classList.remove("thinking","speaking");
-
   if(state==="thinking")liveOrb.classList.add("thinking");
   if(state==="speaking")liveOrb.classList.add("speaking");
-
   liveState.textContent=text;
 }
 
@@ -333,30 +337,125 @@ async function ensureMic(){
     video:false
   });
 
-  const source=audioCtx.createMediaStreamSource(liveStream);
+  micSource=audioCtx.createMediaStreamSource(liveStream);
   analyser=audioCtx.createAnalyser();
   analyser.fftSize=1024;
-  analyser.smoothingTimeConstant=.28;
-  source.connect(analyser);
+  analyser.smoothingTimeConstant=.25;
+  micSource.connect(analyser);
+  captureRate=audioCtx.sampleRate;
 
   return liveStream;
 }
 
-function chooseMime(){
-  const types=[
-    "audio/mp4;codecs=mp4a.40.2",
-    "audio/mp4",
-    "audio/webm;codecs=opus",
-    "audio/webm"
-  ];
+function beginPcmCapture(){
+  endPcmCapture(false);
+  pcmChunks=[];
 
-  for(const t of types){
-    try{
-      if(window.MediaRecorder&&MediaRecorder.isTypeSupported(t))return t;
-    }catch(e){}
+  processor=audioCtx.createScriptProcessor(2048,1,1);
+  silentGain=audioCtx.createGain();
+  silentGain.gain.value=0;
+
+  processor.onaudioprocess=e=>{
+    if(!liveActive)return;
+    const inputData=e.inputBuffer.getChannelData(0);
+    pcmChunks.push(new Float32Array(inputData));
+  };
+
+  micSource.connect(processor);
+  processor.connect(silentGain);
+  silentGain.connect(audioCtx.destination);
+}
+
+function endPcmCapture(returnSamples=true){
+  if(processor){
+    try{processor.onaudioprocess=null}catch(e){}
+    try{micSource?.disconnect(processor)}catch(e){}
+    try{processor.disconnect()}catch(e){}
+    processor=null;
   }
 
-  return "";
+  if(silentGain){
+    try{silentGain.disconnect()}catch(e){}
+    silentGain=null;
+  }
+
+  if(!returnSamples){
+    pcmChunks=[];
+    return null;
+  }
+
+  let total=0;
+  for(const c of pcmChunks)total+=c.length;
+
+  const merged=new Float32Array(total);
+  let offset=0;
+
+  for(const c of pcmChunks){
+    merged.set(c,offset);
+    offset+=c.length;
+  }
+
+  pcmChunks=[];
+  return merged;
+}
+
+function downsample(input,inputRate,outputRate){
+  if(outputRate>=inputRate)return input;
+
+  const ratio=inputRate/outputRate;
+  const outLength=Math.max(1,Math.round(input.length/ratio));
+  const output=new Float32Array(outLength);
+
+  let inPos=0;
+
+  for(let i=0;i<outLength;i++){
+    const nextPos=Math.min(input.length,Math.round((i+1)*ratio));
+    let sum=0,count=0;
+
+    for(let j=inPos;j<nextPos;j++){
+      sum+=input[j];
+      count++;
+    }
+
+    output[i]=count?sum/count:0;
+    inPos=nextPos;
+  }
+
+  return output;
+}
+
+function wavBlob(samples,inputRate){
+  const targetRate=16000;
+  const pcm=downsample(samples,inputRate,targetRate);
+  const buffer=new ArrayBuffer(44+pcm.length*2);
+  const view=new DataView(buffer);
+
+  function writeString(offset,str){
+    for(let i=0;i<str.length;i++)view.setUint8(offset+i,str.charCodeAt(i));
+  }
+
+  writeString(0,"RIFF");
+  view.setUint32(4,36+pcm.length*2,true);
+  writeString(8,"WAVE");
+  writeString(12,"fmt ");
+  view.setUint32(16,16,true);
+  view.setUint16(20,1,true);
+  view.setUint16(22,1,true);
+  view.setUint32(24,targetRate,true);
+  view.setUint32(28,targetRate*2,true);
+  view.setUint16(32,2,true);
+  view.setUint16(34,16,true);
+  writeString(36,"data");
+  view.setUint32(40,pcm.length*2,true);
+
+  let pos=44;
+
+  for(let i=0;i<pcm.length;i++,pos+=2){
+    const s=Math.max(-1,Math.min(1,pcm[i]));
+    view.setInt16(pos,s<0?s*0x8000:s*0x7fff,true);
+  }
+
+  return new Blob([buffer],{type:"audio/wav"});
 }
 
 async function startListeningTurn(fromInterrupt=false){
@@ -375,54 +474,21 @@ async function startListeningTurn(fromInterrupt=false){
       ?"بەردەوام بە؛ JARVIS گوێ دەگرێت."
       :"قسە بکە؛ کاتێک وەستایت یەکسەر وەڵامت دەدەمەوە.";
 
-    liveChunks=[];
-
-    const mime=chooseMime();
-
-    liveRecorder=mime
-      ? new MediaRecorder(liveStream,{mimeType:mime,audioBitsPerSecond:48000})
-      : new MediaRecorder(liveStream);
+    beginPcmCapture();
 
     const started=performance.now();
     let heard=false,lastVoice=started,voiceFrames=0;
 
-    liveRecorder.ondataavailable=e=>{
-      if(e.data&&e.data.size)liveChunks.push(e.data);
-    };
-
-    liveRecorder.onstop=async()=>{
-      stopAnalysis();
-      liveOrb.style.transform="scale(1)";
-
-      if(!liveActive)return;
-
-      const blob=new Blob(liveChunks,{
-        type:liveRecorder.mimeType||"audio/mp4"
-      });
-
-      if(!heard||blob.size<700){
-        setTimeout(()=>{
-          if(liveActive)startListeningTurn(false);
-        },120);
-        return;
-      }
-
-      await processVoiceTurn(blob);
-    };
-
-    liveRecorder.start(120);
-
     const monitor=()=>{
-      if(!liveActive||!liveRecorder||liveRecorder.state!=="recording")return;
+      if(!liveActive||!processor)return;
 
       const rms=rmsNow();
       const now=performance.now();
 
       liveOrb.style.transform="scale("+(1+Math.min(rms*2.5,.16))+")";
 
-      if(rms>.024){
+      if(rms>.023){
         voiceFrames++;
-
         if(voiceFrames>=2){
           heard=true;
           lastVoice=now;
@@ -431,14 +497,34 @@ async function startListeningTurn(fromInterrupt=false){
         voiceFrames=Math.max(0,voiceFrames-1);
       }
 
-      // Fast but not too aggressive: ~0.55s silence ends the turn.
       if(heard&&now-lastVoice>550&&now-started>700){
-        try{liveRecorder.stop()}catch(e){}
+        stopAnalysis();
+        liveOrb.style.transform="scale(1)";
+
+        const samples=endPcmCapture(true);
+        const blob=wavBlob(samples,captureRate);
+
+        if(blob.size<900){
+          setTimeout(()=>{if(liveActive)startListeningTurn(false)},120);
+          return;
+        }
+
+        processVoiceTurn(blob);
         return;
       }
 
       if(now-started>16000){
-        try{liveRecorder.stop()}catch(e){}
+        stopAnalysis();
+        liveOrb.style.transform="scale(1)";
+
+        const samples=endPcmCapture(true);
+
+        if(!heard||!samples?.length){
+          setTimeout(()=>{if(liveActive)startListeningTurn(false)},120);
+          return;
+        }
+
+        processVoiceTurn(wavBlob(samples,captureRate));
         return;
       }
 
@@ -449,6 +535,7 @@ async function startListeningTurn(fromInterrupt=false){
 
   }catch(e){
     console.error("mic failed",e);
+    endPcmCapture(false);
 
     setLiveState("idle","Microphone مۆڵەتی پێ نەدرا");
     liveLast.textContent="لە Safari ـدا Microphone بۆ ئەم site ـە Allow بکە.";
@@ -466,13 +553,7 @@ async function processVoiceTurn(blob){
 
   try{
     const fd=new FormData();
-
-    fd.append(
-      "audio",
-      blob,
-      "voice-turn."+((blob.type||"").includes("webm")?"webm":"m4a")
-    );
-
+    fd.append("audio",blob,"voice.wav");
     fd.append("history",JSON.stringify(messages.slice(-8)));
 
     const r=await fetch("/api/voice-turn",{
@@ -483,26 +564,19 @@ async function processVoiceTurn(blob){
     const data=await r.json();
 
     if(!r.ok||!data.ok){
-      throw new Error(data.detail||data.error||"voice");
+      throw new Error(data.detail||data.error||"Voice request failed");
     }
 
     const transcript=(data.transcript||"").trim();
     const answer=(data.response||"").trim();
 
-    if(transcript){
-      messages.push({role:"user",content:transcript});
-    }
-
-    if(answer){
-      messages.push({role:"assistant",content:answer});
-    }
+    if(transcript)messages.push({role:"user",content:transcript});
+    if(answer)messages.push({role:"assistant",content:answer});
 
     liveLast.textContent=answer||"وەڵامێک نەگەیشت.";
     setLiveState("speaking","JARVIS وەڵام دەداتەوە...");
 
-    // Server audio first (more reliable on iPhone after AudioContext unlock).
-    // If that fails, browser speech is used automatically.
-    playServerTTS(answer,()=>{
+    speakLive(answer,()=>{
       if(!liveActive)return;
 
       setLiveState("listening","گوێم لێتە — قسە بکە...");
@@ -516,10 +590,10 @@ async function processVoiceTurn(blob){
     console.error("voice turn failed",e);
 
     setLiveState("idle","Voice AI هەڵەی دا");
-    liveLast.textContent="دووبارە قسە بکە؛ JARVIS گوێ دەگرێت.";
+    liveLast.textContent="کێشە: "+String(e?.message||e).slice(0,160);
 
     if(liveActive){
-      setTimeout(()=>startListeningTurn(false),500);
+      setTimeout(()=>startListeningTurn(false),900);
     }
   }
 }
@@ -532,17 +606,15 @@ async function startLive(){
     liveMain.textContent="کۆتایی پێبهێنە";
     liveMain.classList.add("end");
 
-    liveLast.textContent="Microphone ئامادە دەکرێت...";
     setLiveState("thinking","JARVIS ئامادە دەکرێت...");
+    liveLast.textContent="Microphone و دەنگ ئامادە دەکرێن...";
 
-    // Unlock iPhone audio and microphone directly from the button tap.
+    unlockSpeech();
     await ensureAudio();
     await ensureMic();
 
-    // IMPORTANT: do not wait for an opening TTS greeting.
-    // Start listening immediately so Safari cannot get stuck in "ready".
-    liveLast.textContent="قسە بکە؛ گوێم لێتە.";
     setLiveState("listening","گوێم لێتە — قسە بکە...");
+    liveLast.textContent="قسە بکە؛ گوێم لێتە.";
 
     startListeningTurn(false);
 
@@ -564,19 +636,16 @@ function endLive(){
 
   stopAnalysis();
   stopSpeaking();
-
-  if(liveRecorder&&liveRecorder.state==="recording"){
-    try{
-      liveRecorder.onstop=null;
-      liveRecorder.stop();
-    }catch(e){}
-  }
-
-  liveRecorder=null;
+  endPcmCapture(false);
 
   if(liveStream){
     liveStream.getTracks().forEach(t=>t.stop());
     liveStream=null;
+  }
+
+  if(micSource){
+    try{micSource.disconnect()}catch(e){}
+    micSource=null;
   }
 
   analyser=null;
@@ -602,7 +671,6 @@ function openLive(){
 
 function closeLive(){
   endLive();
-
   livePanel.classList.remove("show");
   livePanel.setAttribute("aria-hidden","true");
 }
