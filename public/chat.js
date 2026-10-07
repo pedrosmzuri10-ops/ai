@@ -20,28 +20,23 @@ function add(text,role){
 function pickVoice(){
   if(!("speechSynthesis" in window))return null;
   const voices=speechSynthesis.getVoices();
-  return voices.find(v=>/^ku(-|_)/i.test(v.lang))
+  return voices.find(v=>/^ku(-|_)?/i.test(v.lang))
+      || voices.find(v=>/^fa(-|_)?/i.test(v.lang))
       || voices.find(v=>/^ar-IQ/i.test(v.lang))
-      || voices.find(v=>/^ar(-|_)/i.test(v.lang))
-      || voices.find(v=>/^en(-|_)/i.test(v.lang))
-      || voices[0]||null;
+      || voices.find(v=>/^ar(-|_)?/i.test(v.lang))
+      || voices[0]
+      || null;
 }
 
 async function ensureAudio(){
-  if(!audioCtx){
-    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-  }
+  if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();
   if(audioCtx.state!=="running"){
     try{await audioCtx.resume()}catch(e){}
   }
-
-  // Unlock iPhone/Safari audio during a real user gesture.
   try{
     const b=audioCtx.createBuffer(1,1,22050);
     const s=audioCtx.createBufferSource();
-    s.buffer=b;
-    s.connect(audioCtx.destination);
-    s.start(0);
+    s.buffer=b;s.connect(audioCtx.destination);s.start(0);
   }catch(e){}
   return audioCtx;
 }
@@ -52,15 +47,21 @@ function browserSpeak(text,onDone){
     speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(text);
     const v=pickVoice();
-    if(v){u.voice=v;u.lang=v.lang}
-    else{u.lang="ar-IQ"}
-    u.rate=.92;
-    u.pitch=.92;
+    if(v){
+      u.voice=v;
+      u.lang=v.lang;
+    }else{
+      u.lang="ku";
+    }
+    u.rate=1.03;
+    u.pitch=.96;
     u.volume=1;
+
     let finished=false;
     const done=()=>{if(finished)return;finished=true;onDone?.()};
     u.onend=done;
     u.onerror=done;
+
     speechSynthesis.speak(u);
   }catch(e){onDone?.()}
 }
@@ -96,18 +97,16 @@ function rmsNow(){
 
 function startBargeWatcher(){
   stopBargeWatcher();
-  if(!liveActive||!analyser||!currentSource)return;
+  if(!liveActive||!analyser)return;
 
   const watch=()=>{
-    if(!liveActive||!currentSource||bargeLocked)return;
+    if(!liveActive||bargeLocked)return;
     const rms=rmsNow();
     const now=performance.now();
 
-    // Echo cancellation removes most of JARVIS's own speaker audio.
-    // A sustained nearby voice over this threshold is treated as an interruption.
-    if(rms>.055){
+    if(rms>.06){
       if(!bargeSince)bargeSince=now;
-      if(now-bargeSince>140){
+      if(now-bargeSince>130){
         bargeLocked=true;
         liveLast.textContent="باشە، گوێم لێتە...";
         setLiveState("listening","قسەت پێبڕی — گوێم لێتە...");
@@ -115,7 +114,7 @@ function startBargeWatcher(){
         setTimeout(()=>{
           bargeLocked=false;
           if(liveActive)startListeningTurn(true);
-        },70);
+        },50);
         return;
       }
     }else{
@@ -123,50 +122,18 @@ function startBargeWatcher(){
     }
     bargeRaf=requestAnimationFrame(watch);
   };
+
   bargeRaf=requestAnimationFrame(watch);
 }
 
-async function serverSpeak(text,onDone){
+async function speakLive(text,onDone){
   if(!voiceOn||!text){onDone?.();return}
   await ensureAudio();
 
-  try{
-    const r=await fetch("/api/tts",{
-      method:"POST",
-      headers:{"content-type":"application/json"},
-      body:JSON.stringify({text})
-    });
-    if(!r.ok)throw new Error("tts "+r.status);
-
-    const ab=await r.arrayBuffer();
-    if(!ab.byteLength)throw new Error("empty tts");
-
-    const decoded=await audioCtx.decodeAudioData(ab.slice(0));
-    if(!liveActive){onDone?.();return}
-
-    stopSpeaking();
-
-    const source=audioCtx.createBufferSource();
-    source.buffer=decoded;
-    source.connect(audioCtx.destination);
-    currentSource=source;
-    currentSourceEnded=onDone;
-
-    source.onended=()=>{
-      const cb=currentSourceEnded;
-      currentSource=null;
-      currentSourceEnded=null;
-      stopBargeWatcher();
-      cb?.();
-    };
-
-    source.start(0);
-    startBargeWatcher();
-  }catch(e){
-    console.error("server TTS failed",e);
-    // iOS built-in speech is our fallback.
-    browserSpeak(text,onDone);
-  }
+  // For Sorani, using the iPhone's local system speech starts much faster
+  // than waiting for a second network TTS request.
+  browserSpeak(text,onDone);
+  startBargeWatcher();
 }
 
 if("speechSynthesis" in window){
@@ -182,7 +149,7 @@ speakerBtn.onclick=()=>{
   speakerBtn.textContent=voiceOn?"🔊":"🔇";
   if(!voiceOn)stopSpeaking();
   statusEl.textContent=voiceOn?"دەنگی JARVIS چالاکە":"دەنگی JARVIS ناچالاکە";
-  setTimeout(()=>{if(!busy)statusEl.textContent="JARVIS ئامادەیە"},900);
+  setTimeout(()=>{if(!busy)statusEl.textContent="JARVIS ئامادەیە"},700);
 };
 
 async function send(text){
@@ -190,6 +157,7 @@ async function send(text){
   if(!text||busy)return;
   busy=true;
   stopSpeaking();
+
   add(text,"user");
   messages.push({role:"user",content:text});
   input.value="";
@@ -207,7 +175,7 @@ async function send(text){
     bubble.textContent=answer;
     messages.push({role:"assistant",content:answer});
     statusEl.textContent="JARVIS ئامادەیە";
-    if(data.response)serverSpeak(answer);
+    if(data.response)browserSpeak(answer);
   }catch(e){
     bubble.textContent="کێشەی پەیوەندی بە AI هەیە.";
     statusEl.textContent="AI connection error";
@@ -219,6 +187,7 @@ async function send(text){
 
 form.addEventListener("submit",e=>{e.preventDefault();send(input.value)});
 document.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>send(b.dataset.p));
+
 clearBtn.onclick=()=>{
   messages=[];
   stopSpeaking();
@@ -253,7 +222,7 @@ async function ensureMic(){
   const source=audioCtx.createMediaStreamSource(liveStream);
   analyser=audioCtx.createAnalyser();
   analyser.fftSize=1024;
-  analyser.smoothingTimeConstant=.35;
+  analyser.smoothingTimeConstant=.3;
   source.connect(analyser);
 
   return liveStream;
@@ -267,7 +236,9 @@ function chooseMime(){
     "audio/webm"
   ];
   for(const t of types){
-    try{if(window.MediaRecorder&&MediaRecorder.isTypeSupported(t))return t}catch(e){}
+    try{
+      if(window.MediaRecorder&&MediaRecorder.isTypeSupported(t))return t;
+    }catch(e){}
   }
   return "";
 }
@@ -281,13 +252,13 @@ async function startListeningTurn(fromInterrupt=false){
 
     setLiveState("listening",fromInterrupt?"گوێم لێتە — بەردەوام بە...":"گوێم لێتە — قسە بکە...");
     liveLast.textContent=fromInterrupt
-      ?"قسەت پێبڕی. بەردەوام بە، JARVIS گوێ دەگرێت."
-      :"قسە بکە؛ کاتێک وەستایت، JARVIS خۆکارانە وەڵام دەدات.";
+      ?"قسەت پێبڕی. بەردەوام بە."
+      :"قسە بکە؛ کاتێک وەستایت، زوو وەڵامت دەدەمەوە.";
 
     liveChunks=[];
     const mime=chooseMime();
     liveRecorder=mime
-      ? new MediaRecorder(liveStream,{mimeType:mime,audioBitsPerSecond:64000})
+      ? new MediaRecorder(liveStream,{mimeType:mime,audioBitsPerSecond:48000})
       : new MediaRecorder(liveStream);
 
     const started=performance.now();
@@ -303,23 +274,25 @@ async function startListeningTurn(fromInterrupt=false){
       if(!liveActive)return;
 
       const blob=new Blob(liveChunks,{type:liveRecorder.mimeType||"audio/mp4"});
-      if(!heard||blob.size<900){
-        setTimeout(()=>{if(liveActive)startListeningTurn(false)},180);
+
+      if(!heard||blob.size<700){
+        setTimeout(()=>{if(liveActive)startListeningTurn(false)},100);
         return;
       }
+
       await processVoiceTurn(blob);
     };
 
-    liveRecorder.start(160);
+    liveRecorder.start(120);
 
     const monitor=()=>{
       if(!liveActive||!liveRecorder||liveRecorder.state!=="recording")return;
 
       const rms=rmsNow();
       const now=performance.now();
-      liveOrb.style.transform="scale("+(1+Math.min(rms*2.6,.17))+")";
+      liveOrb.style.transform="scale("+(1+Math.min(rms*2.5,.16))+")";
 
-      if(rms>.026){
+      if(rms>.024){
         voiceFrames++;
         if(voiceFrames>=2){
           heard=true;
@@ -329,14 +302,13 @@ async function startListeningTurn(fromInterrupt=false){
         voiceFrames=Math.max(0,voiceFrames-1);
       }
 
-      // Faster conversational turn-taking: ~0.72 s of silence ends the user's turn.
-      if(heard&&now-lastVoice>720&&now-started>800){
+      // Faster turn end: about 0.45s of silence.
+      if(heard&&now-lastVoice>450&&now-started>650){
         try{liveRecorder.stop()}catch(e){}
         return;
       }
 
-      // Safety cap so a forgotten mic does not record forever.
-      if(now-started>18000){
+      if(now-started>16000){
         try{liveRecorder.stop()}catch(e){}
         return;
       }
@@ -345,6 +317,7 @@ async function startListeningTurn(fromInterrupt=false){
     };
 
     rafId=requestAnimationFrame(monitor);
+
   }catch(e){
     console.error("mic failed",e);
     setLiveState("idle","Microphone مۆڵەتی پێ نەدرا");
@@ -356,13 +329,13 @@ async function startListeningTurn(fromInterrupt=false){
 }
 
 async function processVoiceTurn(blob){
-  setLiveState("thinking","JARVIS بیر دەکاتەوە...");
+  setLiveState("thinking","JARVIS زوو وەڵام ئامادە دەکات...");
   liveOrb.style.transform="scale(1)";
 
   try{
     const fd=new FormData();
     fd.append("audio",blob,"voice-turn."+((blob.type||"").includes("webm")?"webm":"m4a"));
-    fd.append("history",JSON.stringify(messages.slice(-12)));
+    fd.append("history",JSON.stringify(messages.slice(-8)));
 
     const r=await fetch("/api/voice-turn",{method:"POST",body:fd});
     const data=await r.json();
@@ -376,19 +349,20 @@ async function processVoiceTurn(blob){
     if(answer)messages.push({role:"assistant",content:answer});
 
     liveLast.textContent=answer||"وەڵامێک نەگەیشت.";
-    setLiveState("speaking","JARVIS قسە دەکات...");
+    setLiveState("speaking","JARVIS بە کوردی وەڵام دەداتەوە...");
 
     await ensureAudio();
-    serverSpeak(answer,()=>{
+    speakLive(answer,()=>{
       if(!liveActive)return;
       setLiveState("listening","گوێم لێتە — قسە بکە...");
-      setTimeout(()=>{if(liveActive)startListeningTurn(false)},120);
+      setTimeout(()=>{if(liveActive)startListeningTurn(false)},60);
     });
+
   }catch(e){
     console.error("voice turn failed",e);
     setLiveState("idle","Voice AI هەڵەی دا");
-    liveLast.textContent="جارێکی تر قسە بکە؛ JARVIS دووبارە گوێ دەگرێت.";
-    if(liveActive)setTimeout(()=>startListeningTurn(false),700);
+    liveLast.textContent="دووبارە قسە بکە؛ JARVIS گوێ دەگرێت.";
+    if(liveActive)setTimeout(()=>startListeningTurn(false),400);
   }
 }
 
@@ -401,16 +375,14 @@ async function startLive(){
     liveMain.classList.add("end");
     setLiveState("thinking","دەنگ و Microphone ئامادە دەکرێن...");
 
-    // Both microphone permission and iPhone audio playback are unlocked
-    // directly from this button tap.
     await ensureAudio();
     await ensureMic();
 
-    // short audible confirmation, then immediately listen
     setLiveState("speaking","JARVIS ئامادەیە...");
-    serverSpeak("سڵاو. گوێم لێتە.",()=>{
-      if(liveActive)setTimeout(()=>startListeningTurn(false),100);
+    browserSpeak("سڵاو، گوێم لێتە.",()=>{
+      if(liveActive)setTimeout(()=>startListeningTurn(false),60);
     });
+
   }catch(e){
     console.error(e);
     liveActive=false;
