@@ -20,7 +20,7 @@ async function transcribe(buffer,env){
       vad_filter:true,
       beam_size:1,
       condition_on_previous_text:false,
-      initial_prompt:"کوردی سۆرانی. گفتوگۆی ڕۆژانە بە کوردی سۆرانی. ناوی یاریدەدەر JARVIS ـە."
+      initial_prompt:"کوردی سۆرانی. گفتوگۆی ڕۆژانە بە کوردی سۆرانی. ناوی یاریدەدەر JARVIS ـە. زمان بە خۆکارانە بناسەوە و دەقەکە وەک کوردی سۆرانی بنووسە."
     });
 
     const text=String(r?.text||"").trim();
@@ -107,7 +107,7 @@ export default{
           );
         }
 
-        const transcript=await transcribe(buffer,env);
+        const transcript=await transcribe(buffer,env); // language is intentionally auto-detected; Cloudflare STT does not accept ku
 
         let history=[];
 
