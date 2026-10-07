@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ku" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#05080d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>JARVIS AI</title>
+<style>
+:root{--bg:#05080d;--panel:#0d141b;--line:#1e2d38;--text:#eef7ff;--muted:#7890a0;--cyan:#45d8ff;--green:#38e59a}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{min-height:100dvh;overflow:hidden}
+.app{max-width:760px;height:100dvh;margin:auto;display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top) + 10px) 14px calc(env(safe-area-inset-bottom) + 8px);background:radial-gradient(circle at 50% -8%,rgba(41,140,181,.22),transparent 34%),linear-gradient(180deg,#070b11,#05080d)}
+header{display:flex;align-items:center;justify-content:space-between;min-height:68px;border-bottom:1px solid var(--line)}
+.brand{display:flex;gap:12px;align-items:center}.orb{width:44px;height:44px;border-radius:50%;border:1px solid var(--cyan);position:relative;box-shadow:0 0 20px #45d8ff33}
+.orb:before{content:"";position:absolute;inset:8px;border:1px solid #45d8ffaa;border-radius:50%;animation:pulse 2.2s infinite}.orb:after{content:"";position:absolute;width:7px;height:7px;border-radius:50%;background:var(--cyan);left:17px;top:17px;box-shadow:0 0 14px var(--cyan)}
+h1{margin:0;font-size:18px;letter-spacing:4px}.online{font-size:11px;color:var(--muted);margin-top:4px}.online b{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-left:5px}
+#chat{flex:1;overflow:auto;padding:18px 0;display:flex;flex-direction:column;gap:10px}.msg{max-width:88%;padding:12px 14px;border-radius:18px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px}.user{align-self:flex-start;background:#123047;border-bottom-left-radius:5px}.ai{align-self:flex-end;background:#101820;border:1px solid #1d2b36;border-bottom-right-radius:5px}
+.welcome{text-align:center;color:var(--muted);margin:auto}.welcome h2{color:var(--text);font-size:20px;margin:10px 0 5px}.bigorb{width:86px;height:86px;margin:auto}
+.quick{display:flex;gap:7px;overflow-x:auto;padding:5px 0}.quick button{flex:0 0 auto;border:1px solid var(--line);background:#0a1118;color:#9eb4c5;border-radius:18px;padding:8px 12px;font-size:12px}
+form{display:flex;gap:8px;align-items:center;padding:7px 0 3px}input{flex:1;min-width:0;background:#0b1219;border:1px solid #1c2b36;color:white;border-radius:24px;padding:13px 16px;font-size:16px;outline:none}
+button.send,button.icon{width:46px;height:46px;border-radius:50%;border:1px solid #223441;color:#eef7ff;font-size:18px}.send{background:#12384d}.icon{background:#0a1219}.status{text-align:center;color:#536b7b;font-size:10px;min-height:16px}
+@keyframes pulse{50%{transform:scale(1.16);opacity:.45}}
+</style>
+</head>
+<body>
+<main class="app">
+<header><div class="brand"><div class="orb"></div><div><h1>JARVIS</h1><div class="online"><b></b> Workers AI Online</div></div></div><button id="clear" class="icon" type="button">⌫</button></header>
+<section id="chat"><div class="welcome" id="welcome"><div class="orb bigorb"></div><h2>سڵاو، من JARVIS ـم.</h2><div>فەرمانەکەت بنووسە یان بە دەنگ بڵێ.</div></div></section>
+<section class="quick">
+<button data-p="تۆ چی دەتوانیت بۆ من بکەیت؟">تواناکانت</button>
+<button data-p="یارمەتیم بدە project ـێکی نوێ پلان بکەم.">Project</button>
+<button data-p="Database ـێکی باش بۆ سیستەمی فرۆشتن پلان بکە.">Database</button>
+<button data-p="نمونەی کۆدێکی پاک و ڕێکخراو بۆم بنووسە.">Code</button>
+</section>
+<form id="composer"><button id="mic" class="icon" type="button">🎙️</button><input id="message" placeholder="فەرمانەکەت بنووسە..." autocomplete="off"><button class="send" type="submit">➤</button></form>
+<div id="status" class="status">JARVIS ئامادەیە</div>
+</main>
+<script src="/chat.js"></script>
+</body>
+</html>
